@@ -1,52 +1,92 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/joho/godotenv"
+	"github.com/spf13/viper"
 )
 
 func main() {
-	// Load environment variables from .env file if present
-	_ = godotenv.Load(".env")
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
 
-	// Get environment and port
-	env := os.Getenv("APP_ENV")
-	port := os.Getenv("SERVER_PORT")
-	if port == "" {
-		port = "8080"
+func run() error {
+	// Initialize Viper
+	initConfig()
+
+	env := viper.GetString("app.env")
+	port := viper.GetString("server.port")
+
+	handler := buildRouter(env, port)
+
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: handler,
 	}
 
+	go func() {
+		log.Printf("Confido is running on http://localhost:%s (env=%s)", port, env)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return srv.Shutdown(ctx)
+
+}
+
+func initConfig() {
+	// Defaults
+	viper.SetDefault("app.env", "development")
+	viper.SetDefault("server.port", 8040)
+
+	// Pull from real environment variables
+	viper.AutomaticEnv()
+
+	// Load config.yaml if present
+	viper.SetConfigName("config")
+	viper.AddConfigPath(".")
+	_ = viper.ReadInConfig()
+}
+
+func buildRouter(env, port string) http.Handler {
 	mux := http.NewServeMux()
 
-	if env == "production" {
-		// Serve static files from the frontend build output
-		staticDir := filepath.Join(".", "client", "dist")
-		fs := http.FileServer(http.Dir(staticDir))
+	mux.HandleFunc("/api/ping", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "pong")
+	})
 
-		// SPA fallback: serve index.html for non-file routes
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			requestedPath := filepath.Join(staticDir, filepath.Clean(r.URL.Path))
-			if info, err := os.Stat(requestedPath); err == nil && !info.IsDir() {
-				// File exists, serve it
-				fs.ServeHTTP(w, r)
+	var root http.Handler
+
+	if env == "production" {
+		root = http.FileServer(http.Dir("./client/dist"))
+	} else {
+		root = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/" {
+				http.NotFound(w, r)
 				return
 			}
-			// Fallback to index.html for SPA routing
-			http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
-		})
 
-		log.Printf("Running in PRODUCTION mode: serving app on port %s", port)
-	} else {
-		// Development mode: no frontend served
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "Frontend not served in development mode", http.StatusNotImplemented)
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprintf(w, "Confido is running in %s mode on port %s\n", env, port)
 		})
 	}
 
-	log.Printf("Server listening on http://localhost:%s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	mux.Handle("/", root)
+	return mux
 }
