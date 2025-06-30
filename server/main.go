@@ -58,8 +58,8 @@ func initConfig() {
 	// Pull from real environment variables
 	viper.AutomaticEnv()
 
-	// Load config.yaml if present
-	viper.SetConfigName("config")
+	// Load .config.yaml if present
+	viper.SetConfigName(".config")
 	viper.AddConfigPath(".")
 	_ = viper.ReadInConfig()
 }

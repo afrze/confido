@@ -15,7 +15,7 @@ client:
 	cd client && npm run dev -- --host
 
 test:
-	go test ./...
+	go test ./... -v
 
 build: tidy
 	GOOS=linux GOARCH=amd64 go build -o bin/server ./server

@@ -1,5 +1,0 @@
-app:
-  env: production     
-
-server:
-  port: 8080      
